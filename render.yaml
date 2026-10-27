@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: kelvo-discord-bot
+    runtime: node
+    plan: free
+    buildCommand: ""
+    startCommand: node bot.js
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: BOT_TOKEN
+        sync: false
