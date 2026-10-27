@@ -1,8 +1,9 @@
 // ═════════════════════════════════════════════════════════════════════
 // KELVO ENHANCER - 24/7 DISCORD BOT & TICKET ENGINE
-// 1. Ticket System (Support & Buying, 1 ticket limit, Admin-only close)
-// 2. Member join logs & 2-Category Role Tracker (3-Month & Lifetime)
-// 3. 100% Automatic 90-day subscription timer and kick
+// 1. Ticket System (Support & Buying, Numbered #ticket-0001, Category TICKET)
+// 2. 1 Ticket Limit per user & Admin-Only Close
+// 3. 100% Arabic Rules & Join Logs
+// 4. Automatic 90-day subscription timer and role management
 // ═════════════════════════════════════════════════════════════════════
 
 const http = require('http');
@@ -19,8 +20,8 @@ let config = {
   LIFETIME_ROLE_ID: '1564534422080856084',
   THREE_MONTH_ROLE_ID: '1564535076857970740',
   THREE_MONTH_ROLE_NAME: '3 Month Subscription',
-  TICKET_CATEGORY_ID: '1401538484279447644', // 🔧 الدعم الفني
-  TICKET_CHANNEL_ID: '1401538585269764126',  // 🎫・ticket
+  TICKET_CATEGORY_ID: '1564578953862184980', // كاتجوري TICKET
+  TICKET_CHANNEL_ID: '1401538585269764126',  // #🎫・ticket
   WELCOME_CHANNEL_ID: '1401537756521435136', // 「✋」welcome
   OWNER_ID: '1296740597591314434',
   CHECK_INTERVAL_MINUTES: 5,
@@ -50,7 +51,8 @@ const server = http.createServer((req, res) => {
     bot: 'Kelvo Enhancer Bot',
     uptime: Math.floor(process.uptime()) + 's',
     activeSubscriptions: subscriptions.filter(s => s.active).length,
-    activeTickets: Object.keys(openTickets).length,
+    activeTickets: Object.keys(ticketData.openTickets).length,
+    totalTicketsCreated: ticketData.counter,
     timestamp: new Date().toISOString()
   }));
 });
@@ -68,13 +70,21 @@ function saveSubscriptions() {
   try { fs.writeFileSync(subsPath, JSON.stringify(subscriptions, null, 2), 'utf8'); } catch (e) {}
 }
 
-// Load / Save Tickets { userId: { channelId, type, createdAt } }
-let openTickets = {};
+// Load / Save Tickets { counter: 0, openTickets: { userId: { channelId, num, type, createdAt } } }
+let ticketData = { counter: 0, openTickets: {} };
 if (fs.existsSync(ticketsPath)) {
-  try { openTickets = JSON.parse(fs.readFileSync(ticketsPath, 'utf8')); } catch (e) { openTickets = {}; }
+  try {
+    const raw = JSON.parse(fs.readFileSync(ticketsPath, 'utf8'));
+    if (raw && typeof raw === 'object') {
+      ticketData.counter = raw.counter || 0;
+      ticketData.openTickets = raw.openTickets || raw; // backwards compat
+    }
+  } catch (e) {
+    ticketData = { counter: 0, openTickets: {} };
+  }
 }
 function saveTickets() {
-  try { fs.writeFileSync(ticketsPath, JSON.stringify(openTickets, null, 2), 'utf8'); } catch (e) {}
+  try { fs.writeFileSync(ticketsPath, JSON.stringify(ticketData, null, 2), 'utf8'); } catch (e) {}
 }
 
 // Discord REST API Helper
@@ -115,7 +125,7 @@ async function sendTicketPanel(channelId = config.TICKET_CHANNEL_ID) {
     embeds: [
       {
         title: 'Ticket Kelvo 🎫',
-        description: '`rules Ticket ....`\n• (( Don\'t Spam In Ticket ))\n• (( Don\'t open two Ticket in same time ))\n• (( don\'t open a ticket unless you have proof or conclusive evidence ))\n• لا تسوي سبام رسائل بالتكت',
+        description: '`قوانين التذاكر ....`\n• لا تسوي سبام رسائل بالتكت.\n• يمنع فتح أكثر من تذكرة في نفس الوقت.\n• لا تفتح تذكرة إلا إذا كان لديك سبب أو استفسار واضح.\n• إغلاق التذكرة متاح فقط لإدارة السيرفر.',
         color: 0x22c55e,
         footer: { text: 'Kelvo Store • نظام التذاكر الرسمي' }
       }
@@ -181,9 +191,8 @@ async function handleInteraction(interaction) {
     const selectedVal = data.values && data.values[0] ? data.values[0] : 'ticket_support';
 
     // Rule: Max 1 Ticket per user!
-    if (openTickets[userId]) {
-      const existingChannel = openTickets[userId].channelId;
-      // Respond Ephemeral (only visible to this user)
+    if (ticketData.openTickets[userId]) {
+      const existingChannel = ticketData.openTickets[userId].channelId;
       await fetch(`https://discord.com/api/v10/interactions/${id}/${token}/callback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -210,13 +219,18 @@ async function handleInteraction(interaction) {
 
     try {
       const isSupport = selectedVal === 'ticket_support';
-      const channelName = (isSupport ? 'support-' : 'buying-') + username.toLowerCase().replace(/[^a-z0-9_-]/g, '');
 
-      // Create Private Channel
+      // Increment ticket counter for sequential numbering
+      ticketData.counter = (ticketData.counter || 0) + 1;
+      const ticketNum = String(ticketData.counter).padStart(4, '0');
+      const channelName = `ticket-${ticketNum}`;
+
+      // Create Private Channel in Category TICKET
       const newChannel = await discordApi(`/guilds/${config.GUILD_ID}/channels`, 'POST', {
         name: channelName,
         type: 0, // Text Channel
-        parent_id: config.TICKET_CATEGORY_ID, // 🔧 الدعم الفني
+        parent_id: config.TICKET_CATEGORY_ID, // كاتجوري TICKET
+        topic: `تذكرة: ${isSupport ? 'Support' : 'Buying'} • صاحب التذكرة: ${username} (${userId})`,
         permission_overwrites: [
           {
             id: config.GUILD_ID, // @everyone -> HIDE
@@ -237,8 +251,9 @@ async function handleInteraction(interaction) {
       });
 
       // Save to active tickets
-      openTickets[userId] = {
+      ticketData.openTickets[userId] = {
         channelId: newChannel.id,
+        num: ticketNum,
         type: isSupport ? 'Support' : 'Buying',
         username: username,
         createdAt: Date.now()
@@ -250,10 +265,10 @@ async function handleInteraction(interaction) {
         content: `<@${userId}>`,
         embeds: [
           {
-            title: `🎫 تذكرة ${isSupport ? 'Support (دعم فني)' : 'Buying (شراء واشتراك)'}`,
-            description: `مرحباً بك <@${userId}> في تذكرتك الخاصة!\n\nيرجى كتابة تفاصيل طلبك أو استفسارك هنا وسيقوم فريق الإدارة بالرد عليك في أقرب وقت.\n\n⚠️ **تنبيه:** إغلاق التذكرة متاح فقط للمشرفين (Administrators).`,
+            title: `🎫 تذكرة ${isSupport ? 'Support (دعم فني)' : 'Buying (شراء واشتراك)'} #${ticketNum}`,
+            description: `مرحباً بك <@${userId}> في تذكرتك الخاصة!\n\nيرجى كتابة تفاصيل طلبك أو استفسارك هنا وسيقوم فريق الإدارة بالرد عليك في أقرب وقت.\n\n⚠️ **قوانين:**\n• لا تسوي سبام رسائل بالتكت.\n• إغلاق التذكرة متاح فقط للمشرفين (Administrators).`,
             color: isSupport ? 0x0284c7 : 0x22c55e,
-            footer: { text: `User ID: ${userId} • Kelvo Store` }
+            footer: { text: `Ticket #${ticketNum} • User ID: ${userId} • Kelvo Store` }
           }
         ],
         components: [
@@ -277,11 +292,11 @@ async function handleInteraction(interaction) {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: `✅ **تم فتح تذكرتك بنجاح:** <#${newChannel.id}>`
+          content: `✅ **تم فتح تذكرتك بنجاح:** <#${newChannel.id}> (#ticket-${ticketNum})`
         })
       });
 
-      console.log(`[+] [تذكرة جديدة] فتح ${username} تذكرة (${isSupport ? 'Support' : 'Buying'}): #${channelName}`);
+      console.log(`[+] [تذكرة جديدة] فتح ${username} تذكرة (#ticket-${ticketNum}) في كاتجوري TICKET`);
     } catch (err) {
       console.error('Failed to create ticket channel:', err.message);
     }
@@ -321,9 +336,9 @@ async function handleInteraction(interaction) {
     });
 
     // Remove from openTickets
-    for (const u in openTickets) {
-      if (openTickets[u].channelId === channelId) {
-        delete openTickets[u];
+    for (const u in ticketData.openTickets) {
+      if (ticketData.openTickets[u].channelId === channelId) {
+        delete ticketData.openTickets[u];
         break;
       }
     }
@@ -387,7 +402,6 @@ async function getRolesReport() {
     for (const m of members) {
       if (!m.user || m.user.bot) continue;
       const roles = Array.isArray(m.roles) ? m.roles : [];
-      const name = m.user.global_name || m.user.username;
 
       if (roles.includes(config.THREE_MONTH_ROLE_ID)) {
         const sub = subscriptions.find(s => s.userId === m.user.id && s.active);
@@ -522,6 +536,8 @@ function connectGateway() {
           console.log('🤖 بوت Kelvo Enhancer متصل وشغال الآن بنجاح (Online)!');
           console.log('👤 اسم البوت: ' + d.user.username + '#' + d.user.discriminator);
           console.log('🎫 نظام التذاكر: مفعل (Support & Buying)');
+          console.log('📂 كاتجوري التذاكر: TICKET (' + config.TICKET_CATEGORY_ID + ')');
+          console.log('🔢 ترقيم التذاكر: يبدأ من #ticket-0001 تصاعدياً');
           console.log('🔒 إغلاق التذاكر: مقتصر على المشرفين (Administrators)');
           console.log('═══════════════════════════════════════════════════════════════');
 
@@ -562,7 +578,7 @@ function connectGateway() {
 
     if (e.code === 4014 && activeIntents !== 1) {
       console.log('⚠️ [تنبيه] خيار Server Members Intent غير مفعل في Developer Portal.');
-      console.log('💡 جاري الاتصال بالوضع الأساسي مع استمرار عمل الفحص الدوري والسحب التلقائي!');
+      console.log('💡 جاري الاتصال بالوضع الأساسي مع استمرار عمل الفحص الدوري والسحب التلقائي والتذاكر!');
       activeIntents = 1;
       setTimeout(connectGateway, 2000);
       return;
