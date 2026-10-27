@@ -20,6 +20,9 @@ let config = {
   LIFETIME_ROLE_ID: '1564534422080856084',
   THREE_MONTH_ROLE_ID: '1564535076857970740',
   THREE_MONTH_ROLE_NAME: '3 Month Subscription',
+  TWO_WEEK_ROLE_ID: '1564729803272364172',
+  TWO_WEEK_ROLE_NAME: '2 Week Subscripiton',
+  TWO_WEEK_DAYS: 14,
   CATEGORY_SERVICE_ID: '1564598869050916944', // Ticket Service
   CATEGORY_BUYING_ID: '1564598579979620463',  // Ticket Buying
   CATEGORY_SUPPORT_ID: '1564578953862184980', // TICKET Support
@@ -40,8 +43,8 @@ if (fs.existsSync(configPath)) {
 
 // Token resolution
 const _p1 = 'MTU2NDUzMzI2NjIyMjk0ODM4Mg';
-const _p2 = 'GzjdjM';
-const _p3 = 'Kepx_o3ltNTowVe9s43tLSmsgntDL7_Em4DJw4';
+const _p2 = 'GbmYVK';
+const _p3 = 'kOkMa_ElIUYhMzQNT7IFaZccGPouEJY3byuIfg';
 const FALLBACK_TOKEN = [_p1, _p2, _p3].join('.');
 const BOT_AUTH_TOKEN = process.env.BOT_TOKEN || (config.BOT_TOKEN && config.BOT_TOKEN !== 'YOUR_BOT_TOKEN_HERE' ? config.BOT_TOKEN : FALLBACK_TOKEN);
 
@@ -461,12 +464,13 @@ async function syncExistingMembers() {
   } catch (err) {}
 }
 
-// Display 2-Category Roles Report
+// Display 3-Category Roles Report
 async function getRolesReport() {
   try {
     const members = await discordApi('/guilds/' + config.GUILD_ID + '/members?limit=1000');
     if (!Array.isArray(members)) return null;
 
+    const twoWeekMembers = [];
     const threeMonthMembers = [];
     const lifetimeMembers = [];
     const now = Date.now();
@@ -475,19 +479,26 @@ async function getRolesReport() {
       if (!m.user || m.user.bot) continue;
       const roles = Array.isArray(m.roles) ? m.roles : [];
 
-      if (roles.includes(config.THREE_MONTH_ROLE_ID)) {
-        const sub = subscriptions.find(s => s.userId === m.user.id && s.active);
+      if (config.TWO_WEEK_ROLE_ID && roles.includes(config.TWO_WEEK_ROLE_ID)) {
+        const sub = subscriptions.find(s => s.userId === m.user.id && s.roleId === config.TWO_WEEK_ROLE_ID && s.active);
+        let daysLeft = 14;
+        if (sub && sub.expiresAt) {
+          daysLeft = Math.max(0, Math.ceil((sub.expiresAt - now) / (24 * 60 * 60 * 1000)));
+        }
+        twoWeekMembers.push(`• <@${m.user.id}> — متبقي: **${daysLeft}** يوم`);
+      } else if (config.THREE_MONTH_ROLE_ID && roles.includes(config.THREE_MONTH_ROLE_ID)) {
+        const sub = subscriptions.find(s => s.userId === m.user.id && s.roleId === config.THREE_MONTH_ROLE_ID && s.active);
         let daysLeft = 90;
         if (sub && sub.expiresAt) {
           daysLeft = Math.max(0, Math.ceil((sub.expiresAt - now) / (24 * 60 * 60 * 1000)));
         }
         threeMonthMembers.push(`• <@${m.user.id}> — متبقي: **${daysLeft}** يوم`);
-      } else if (roles.includes(config.LIFETIME_ROLE_ID)) {
+      } else if (config.LIFETIME_ROLE_ID && roles.includes(config.LIFETIME_ROLE_ID)) {
         lifetimeMembers.push(`• <@${m.user.id}> — \`دائم ∞\``);
       }
     }
 
-    return { threeMonthMembers, lifetimeMembers };
+    return { twoWeekMembers, threeMonthMembers, lifetimeMembers };
   } catch (e) {
     return null;
   }
@@ -500,17 +511,17 @@ async function checkExpiredSubscriptions() {
 
   for (const sub of subscriptions) {
     if (sub.active && sub.expiresAt && now >= sub.expiresAt) {
-      console.log('⏰ [انتهاء اشتراك] انتهت مدة الـ 90 يوماً للعضو: ' + sub.username + ' (' + sub.userId + ')');
+      console.log(`⏰ [انتهاء اشتراك] انتهت مدة (${sub.roleName || 'الاشتراك'}) للعضو: ${sub.username} (${sub.userId})`);
       try {
-        if (config.THREE_MONTH_ROLE_ID) {
-          await discordApi('/guilds/' + config.GUILD_ID + '/members/' + sub.userId + '/roles/' + config.THREE_MONTH_ROLE_ID, 'DELETE');
-          console.log('✅ تم سحب رتبة الـ 3 شهور من ' + sub.username + ' تلقائياً من ديسكورد!');
+        if (sub.roleId) {
+          await discordApi('/guilds/' + config.GUILD_ID + '/members/' + sub.userId + '/roles/' + sub.roleId, 'DELETE');
+          console.log(`✅ تم سحب رتبة (${sub.roleName}) من ${sub.username} تلقائياً من ديسكورد!`);
         }
         sub.active = false;
         sub.expiredAt = now;
         changed = true;
       } catch (err) {
-        console.error('❌ تعذر سحب الرتبة تلقائياً من ' + sub.username + ':', err.message);
+        console.error(`❌ تعذر سحب الرتبة تلقائياً من ${sub.username}:`, err.message);
       }
     }
   }
@@ -525,31 +536,62 @@ function handleMemberUpdate(data) {
   const roles = Array.isArray(data.roles) ? data.roles : [];
 
   if (!userId) return;
+  const now = Date.now();
 
-  const hasThreeMonth = roles.includes(config.THREE_MONTH_ROLE_ID);
-  const existingSub = subscriptions.find(s => s.userId === userId && s.active);
+  // 1. Check 2 Weeks Role
+  if (config.TWO_WEEK_ROLE_ID) {
+    const has2w = roles.includes(config.TWO_WEEK_ROLE_ID);
+    const sub2w = subscriptions.find(s => s.userId === userId && s.roleId === config.TWO_WEEK_ROLE_ID && s.active);
 
-  if (hasThreeMonth && !existingSub) {
-    const now = Date.now();
-    const expiresAt = now + (90 * 24 * 60 * 60 * 1000);
-    subscriptions.push({
-      userId: userId,
-      username: username,
-      roleId: config.THREE_MONTH_ROLE_ID,
-      roleName: config.THREE_MONTH_ROLE_NAME,
-      startedAt: now,
-      expiresAt: expiresAt,
-      active: true
-    });
-    saveSubscriptions();
-    console.log(`🎉 [إعطاء رتبة تلقائي] حصل ${username} على رتبة 3 شهور! بدأ عداد الـ 90 يوماً.`);
+    if (has2w && !sub2w) {
+      const expiresAt = now + (14 * 24 * 60 * 60 * 1000);
+      subscriptions.push({
+        userId: userId,
+        username: username,
+        roleId: config.TWO_WEEK_ROLE_ID,
+        roleName: config.TWO_WEEK_ROLE_NAME || '2 Week Subscripiton',
+        startedAt: now,
+        expiresAt: expiresAt,
+        active: true
+      });
+      saveSubscriptions();
+      console.log(`🎉 [إعطاء رتبة تلقائي] حصل ${username} على رتبة أسبوعين! بدأ عداد الـ 14 يوماً.`);
+    }
+
+    if (!has2w && sub2w) {
+      sub2w.active = false;
+      sub2w.revokedAt = now;
+      saveSubscriptions();
+      console.log(`🚫 [سحب رتبة تلقائي] سُحبت رتبة الأسبوعين من ${username}!`);
+    }
   }
 
-  if (!hasThreeMonth && existingSub) {
-    existingSub.active = false;
-    existingSub.revokedAt = Date.now();
-    saveSubscriptions();
-    console.log(`🚫 [سحب رتبة تلقائي] سُحبت رتبة 3 شهور من ${username}! سيتم طرده من الإضافة.`);
+  // 2. Check 3 Months Role
+  if (config.THREE_MONTH_ROLE_ID) {
+    const has3m = roles.includes(config.THREE_MONTH_ROLE_ID);
+    const sub3m = subscriptions.find(s => s.userId === userId && s.roleId === config.THREE_MONTH_ROLE_ID && s.active);
+
+    if (has3m && !sub3m) {
+      const expiresAt = now + (90 * 24 * 60 * 60 * 1000);
+      subscriptions.push({
+        userId: userId,
+        username: username,
+        roleId: config.THREE_MONTH_ROLE_ID,
+        roleName: config.THREE_MONTH_ROLE_NAME || '3 Month Subscription',
+        startedAt: now,
+        expiresAt: expiresAt,
+        active: true
+      });
+      saveSubscriptions();
+      console.log(`🎉 [إعطاء رتبة تلقائي] حصل ${username} على رتبة 3 شهور! بدأ عداد الـ 90 يوماً.`);
+    }
+
+    if (!has3m && sub3m) {
+      sub3m.active = false;
+      sub3m.revokedAt = now;
+      saveSubscriptions();
+      console.log(`🚫 [سحب رتبة تلقائي] سُحبت رتبة 3 شهور من ${username}! سيتم طرده من الإضافة.`);
+    }
   }
 }
 
@@ -745,22 +787,28 @@ async function handleMessage(msg) {
       return;
     }
 
-    const threeMText = report.threeMonthMembers.length > 0 ? report.threeMonthMembers.join('\n') : '• لا يوجد مشتركون حالياً';
-    const lifetimeText = report.lifetimeMembers.length > 0 ? report.lifetimeMembers.join('\n') : '• لا يوجد مشتركون حالياً';
+    const twoWText = report.twoWeekMembers && report.twoWeekMembers.length > 0 ? report.twoWeekMembers.join('\n') : '• لا يوجد مشتركون حالياً';
+    const threeMText = report.threeMonthMembers && report.threeMonthMembers.length > 0 ? report.threeMonthMembers.join('\n') : '• لا يوجد مشتركون حالياً';
+    const lifetimeText = report.lifetimeMembers && report.lifetimeMembers.length > 0 ? report.lifetimeMembers.join('\n') : '• لا يوجد مشتركون حالياً';
 
     await sendMessage(msg.channel_id, {
       embeds: [
         {
           title: '📊 قائمة المشتركين وأصحاب الرتب في السيرفر',
-          color: 0x22c55e,
+          color: 0x38bdf8,
           fields: [
             {
-              name: '⏳ الخانة الأولى: أصحاب رتبة الـ 3 شهور (3 Month Subscription)',
+              name: '⚡ الخانة الأولى: أصحاب رتبة الأسبوعين (2 Week Subscripiton)',
+              value: twoWText,
+              inline: false
+            },
+            {
+              name: '⏳ الخانة الثانية: أصحاب رتبة الـ 3 شهور (3 Month Subscription)',
               value: threeMText,
               inline: false
             },
             {
-              name: '👑 الخانة الثانية: أصحاب رتبة مدى الحياة (Lifetime Access)',
+              name: '👑 الخانة الثالثة: أصحاب رتبة مدى الحياة (Lifetime Access)',
               value: lifetimeText,
               inline: false
             }
@@ -772,13 +820,42 @@ async function handleMessage(msg) {
     return;
   }
 
-  // Command: !sub 3m @user  OR  !sub lifetime @user
+  // Command: !sub 2w @user  OR  !sub 3m @user  OR  !sub lifetime @user
   if (command === 'sub') {
     const type = (args[0] || '').toLowerCase();
     const targetId = extractUserId(args[1]);
 
-    if (!targetId || (type !== '3m' && type !== 'lifetime' && type !== '3months')) {
-      await sendMessage(msg.channel_id, '❌ طريقة الاستخدام:\n`!sub 3m @user` أو `!sub lifetime @user`');
+    if (!targetId || (type !== '2w' && type !== '2weeks' && type !== '3m' && type !== 'lifetime' && type !== '3months')) {
+      await sendMessage(msg.channel_id, '❌ طريقة الاستخدام:\n`!sub 2w @user` (أسبوعين)\n`!sub 3m @user` (3 شهور)\n`!sub lifetime @user` (مدى الحياة)');
+      return;
+    }
+
+    if (type === '2w' || type === '2weeks') {
+      try {
+        await discordApi('/guilds/' + config.GUILD_ID + '/members/' + targetId + '/roles/' + config.TWO_WEEK_ROLE_ID, 'PUT');
+        const now = Date.now();
+        const expiresAt = now + (14 * 24 * 60 * 60 * 1000);
+
+        const existingIdx = subscriptions.findIndex(s => s.userId === targetId && s.roleId === config.TWO_WEEK_ROLE_ID);
+        const subData = {
+          userId: targetId,
+          username: (args[1] || targetId).replace(/[<@!>]/g, ''),
+          roleId: config.TWO_WEEK_ROLE_ID,
+          roleName: config.TWO_WEEK_ROLE_NAME || '2 Week Subscripiton',
+          startedAt: now,
+          expiresAt: expiresAt,
+          active: true
+        };
+
+        if (existingIdx !== -1) subscriptions[existingIdx] = subData;
+        else subscriptions.push(subData);
+        saveSubscriptions();
+
+        const expDate = new Date(expiresAt).toISOString().split('T')[0];
+        await sendMessage(msg.channel_id, `⚡ **تم تفعيل اشتراك أسبوعين بنجاح!**\n👤 العضو: <@${targetId}>\n⏳ المدة: 14 يوماً\n📅 ينتهي في: \`${expDate}\`\n*(البوت سيسحب الرتبة ويطرده من الإضافة تلقائياً بعد 14 يوم)*`);
+      } catch (err) {
+        await sendMessage(msg.channel_id, '❌ تعذر إعطاء الرتبة: ' + err.message);
+      }
       return;
     }
 
@@ -788,12 +865,12 @@ async function handleMessage(msg) {
         const now = Date.now();
         const expiresAt = now + (90 * 24 * 60 * 60 * 1000);
 
-        const existingIdx = subscriptions.findIndex(s => s.userId === targetId);
+        const existingIdx = subscriptions.findIndex(s => s.userId === targetId && s.roleId === config.THREE_MONTH_ROLE_ID);
         const subData = {
           userId: targetId,
           username: (args[1] || targetId).replace(/[<@!>]/g, ''),
           roleId: config.THREE_MONTH_ROLE_ID,
-          roleName: config.THREE_MONTH_ROLE_NAME,
+          roleName: config.THREE_MONTH_ROLE_NAME || '3 Month Subscription',
           startedAt: now,
           expiresAt: expiresAt,
           active: true
@@ -831,6 +908,9 @@ async function handleMessage(msg) {
     }
 
     try {
+      if (config.TWO_WEEK_ROLE_ID) {
+        await discordApi('/guilds/' + config.GUILD_ID + '/members/' + targetId + '/roles/' + config.TWO_WEEK_ROLE_ID, 'DELETE').catch(() => null);
+      }
       if (config.THREE_MONTH_ROLE_ID) {
         await discordApi('/guilds/' + config.GUILD_ID + '/members/' + targetId + '/roles/' + config.THREE_MONTH_ROLE_ID, 'DELETE').catch(() => null);
       }
@@ -838,14 +918,15 @@ async function handleMessage(msg) {
         await discordApi('/guilds/' + config.GUILD_ID + '/members/' + targetId + '/roles/' + config.LIFETIME_ROLE_ID, 'DELETE').catch(() => null);
       }
 
-      const sub = subscriptions.find(s => s.userId === targetId && s.active);
-      if (sub) {
-        sub.active = false;
-        sub.revokedAt = Date.now();
-        saveSubscriptions();
+      for (const s of subscriptions) {
+        if (s.userId === targetId && s.active) {
+          s.active = false;
+          s.revokedAt = Date.now();
+        }
       }
+      saveSubscriptions();
 
-      await sendMessage(msg.channel_id, `🚫 **تم سحب الرتبة من <@${targetId}> بنجاح!**\nسيتم قفل الإضافة وطرده فوراً.`);
+      await sendMessage(msg.channel_id, `🚫 **تم سحب جميع رتب الاشتراك من <@${targetId}> بنجاح!**\nسيتم قفل الإضافة وطرده فوراً.`);
     } catch (err) {
       await sendMessage(msg.channel_id, '❌ تعذر سحب الرتبة: ' + err.message);
     }
@@ -856,11 +937,12 @@ async function handleMessage(msg) {
   if (command === 'help') {
     const helpMsg = 
       '📋 **أوامر بوت Kelvo Enhancer:**\n\n' +
-      '• `!roles` أو `!members` - عرض الخانتين (أصحاب رتبة 3 شهور وأصحاب رتبة مدى الحياة)\n' +
+      '• `!roles` أو `!members` - عرض الخانات الثلاث (أسبوعين، 3 شهور، مدى الحياة)\n' +
       '• `!ticket` - إعادة إرسال بنل التذاكر في الروم\n' +
+      '• `!sub 2w @user` - إعطاء رتبة أسبوعين لعضو (تُسحب تلقائياً بعد 14 يوم)\n' +
       '• `!sub 3m @user` - إعطاء رتبة 3 شهور لعضو (تُسحب تلقائياً بعد 90 يوم)\n' +
       '• `!sub lifetime @user` - إعطاء رتبة مدى الحياة\n' +
-      '• `!unsub @user` - سحب الرتبة وطرده من الإضافة فوراً';
+      '• `!unsub @user` - سحب جميع الرتب وطرده من الإضافة فوراً';
     await sendMessage(msg.channel_id, helpMsg);
     return;
   }
