@@ -1,0 +1,12 @@
+{
+  "name": "kelvo-discord-bot",
+  "version": "1.0.0",
+  "description": "Kelvo Enhancer 24/7 Discord Role Manager Bot",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
