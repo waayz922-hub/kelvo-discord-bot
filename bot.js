@@ -20,7 +20,10 @@ let config = {
   LIFETIME_ROLE_ID: '1564534422080856084',
   THREE_MONTH_ROLE_ID: '1564535076857970740',
   THREE_MONTH_ROLE_NAME: '3 Month Subscription',
-  TICKET_CATEGORY_ID: '1564578953862184980', // كاتجوري TICKET
+  CATEGORY_SERVICE_ID: '1564598869050916944', // Ticket Service
+  CATEGORY_BUYING_ID: '1564598579979620463',  // Ticket Buying
+  CATEGORY_SUPPORT_ID: '1564578953862184980', // TICKET Support
+  TICKET_CATEGORY_ID: '1564578953862184980',
   TICKET_CHANNEL_ID: '1401538585269764126',  // #🎫・ticket
   WELCOME_CHANNEL_ID: '1401537756521435136', // 「✋」welcome
   OWNER_ID: '1296740597591314434',
@@ -238,22 +241,41 @@ async function handleInteraction(interaction) {
 
     try {
       const typeMap = {
-        ticket_service: { name: 'طلب خدمة', emoji: '👤', color: 0x3b82f6 },
-        ticket_buying: { name: 'شراء منتج', emoji: '🛒', color: 0x22c55e },
-        ticket_inquiry: { name: 'استفسار', emoji: '⚙️', color: 0xeab308 }
+        ticket_service: {
+          name: 'طلب خدمة',
+          emoji: '👤',
+          color: 0x3b82f6,
+          categoryId: config.CATEGORY_SERVICE_ID || '1564598869050916944',
+          desc: 'يرجى كتابة تفاصيل الخدمة التي تحتاجها وسيقوم فريق Kelvo بالرد عليك ومساعدتك في أقرب وقت.'
+        },
+        ticket_buying: {
+          name: 'شراء منتج',
+          emoji: '🛒',
+          color: 0x22c55e,
+          categoryId: config.CATEGORY_BUYING_ID || '1564598579979620463',
+          desc: 'يرجى كتابة المنتج أو الاشتراك الذي ترغب في شرائه وسيقوم فريق المبيعات بإتمام طلبك فوراً.'
+        },
+        ticket_inquiry: {
+          name: 'استفسار',
+          emoji: '⚙️',
+          color: 0xeab308,
+          categoryId: config.CATEGORY_SUPPORT_ID || '1564578953862184980',
+          desc: 'يرجى كتابة سؤالك أو استفسارك وسيقوم فريق الدعم الفني بالرد عليك وتوضيح كل ما تحتاجه.'
+        }
       };
-      const typeInfo = typeMap[selectedVal] || { name: 'تذكرة عامة', emoji: '🎫', color: 0x22c55e };
+      const typeInfo = typeMap[selectedVal] || typeMap.ticket_inquiry;
+      const targetCategory = typeInfo.categoryId;
 
       // Increment ticket counter for sequential numbering
       ticketData.counter = (ticketData.counter || 0) + 1;
       const ticketNum = String(ticketData.counter).padStart(4, '0');
       const channelName = `ticket-${ticketNum}`;
 
-      // Create Private Channel in Category TICKET
+      // Create Private Channel in Category
       const newChannel = await discordApi(`/guilds/${config.GUILD_ID}/channels`, 'POST', {
         name: channelName,
         type: 0, // Text Channel
-        parent_id: config.TICKET_CATEGORY_ID, // كاتجوري TICKET
+        parent_id: targetCategory,
         topic: `تذكرة: ${typeInfo.name} • صاحب التذكرة: ${username} (${userId})`,
         permission_overwrites: [
           {
@@ -289,8 +311,8 @@ async function handleInteraction(interaction) {
         content: `<@${userId}>`,
         embeds: [
           {
-            title: `🎫 تذكرة ${typeInfo.name} #${ticketNum}`,
-            description: `مرحباً بك <@${userId}> في تذكرتك الخاصة (${typeInfo.name})!\n\nيرجى كتابة تفاصيل طلبك أو استفسارك هنا وسيقوم فريق الدعم بالرد عليك فوراً وتلبية جميع احتياجاتك باحترافية.\n\n⚠️ **قوانين:**\n• لا تسوي سبام رسائل بالتكت.\n• إغلاق التذكرة متاح فقط للمشرفين (Administrators).`,
+            title: `${typeInfo.emoji} تذكرة ${typeInfo.name} #${ticketNum}`,
+            description: `مرحباً بك <@${userId}> في تذكرتك الخاصة (${typeInfo.name})!\n\n${typeInfo.desc}\n\n⚠️ **قوانين:**\n• لا تسوي سبام رسائل بالتكت.\n• إغلاق التذكرة متاح فقط للمشرفين (Administrators).`,
             color: typeInfo.color,
             footer: { text: `Ticket #${ticketNum} • Kelvo Store` }
           }
@@ -316,11 +338,11 @@ async function handleInteraction(interaction) {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: `✅ **تم فتح تذكرتك بنجاح:** <#${newChannel.id}> (#ticket-${ticketNum})`
+          content: `✅ **تم فتح تذكرتك بنجاح:** <#${newChannel.id}> (#ticket-${ticketNum}) في قسم **${typeInfo.name}**`
         })
       });
 
-      console.log(`[+] [تذكرة جديدة] فتح ${username} تذكرة ${typeInfo.name} (#ticket-${ticketNum}) في كاتجوري TICKET`);
+      console.log(`[+] [تذكرة جديدة] فتح ${username} تذكرة ${typeInfo.name} (#ticket-${ticketNum}) في كاتجوري (${targetCategory})`);
     } catch (err) {
       console.error('Failed to create ticket channel:', err.message);
       ticketData.counter = Math.max(0, (ticketData.counter || 1) - 1);
