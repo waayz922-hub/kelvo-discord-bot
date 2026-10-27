@@ -212,21 +212,36 @@ async function handleInteraction(interaction) {
   if (data.custom_id === 'kelvo_ticket_select') {
     const selectedVal = data.values && data.values[0] ? data.values[0] : 'ticket_service';
 
-    // Rule: Max 1 Ticket per user!
+    // Rule: Max 1 Ticket per user! Check if user has an open ticket AND if channel really exists
     if (ticketData.openTickets[userId]) {
       const existingChannel = ticketData.openTickets[userId].channelId;
-      await fetch(`https://discord.com/api/v10/interactions/${id}/${token}/callback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 4,
-          data: {
-            content: `❌ **لا يمكنك فتح أكثر من تذكرة في نفس الوقت!**\nلديك تذكرة مفتوحة بالفعل في الروم: <#${existingChannel}>`,
-            flags: 64 // EPHEMERAL
-          }
-        })
-      });
-      return;
+      let channelExists = false;
+      try {
+        const ch = await discordApi(`/channels/${existingChannel}`);
+        if (ch && ch.id) channelExists = true;
+      } catch (e) {
+        channelExists = false;
+      }
+
+      if (channelExists) {
+        await fetch(`https://discord.com/api/v10/interactions/${id}/${token}/callback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 4,
+            data: {
+              content: `❌ **لا يمكنك فتح أكثر من تذكرة في نفس الوقت!**\nلديك تذكرة مفتوحة بالفعل في الروم: <#${existingChannel}>`,
+              flags: 64 // EPHEMERAL
+            }
+          })
+        });
+        return;
+      } else {
+        // Channel was deleted manually from server! Clear it on the spot!
+        console.log(`[i] تم رصد حذف روم التذكرة السابق (${existingChannel}) يدوياً. تم فك الحظر عن ${username} وتحديث البيانات.`);
+        delete ticketData.openTickets[userId];
+        saveTickets();
+      }
     }
 
     // Acknowledge interaction (loading...)
@@ -554,6 +569,38 @@ async function handleMemberAdd(data) {
   } catch (e) {}
 }
 
+// Real-Time Channel Delete (Manual Ticket Deletion Detection)
+function handleChannelDelete(channel) {
+  if (!channel || !channel.id) return;
+  const deletedId = channel.id;
+  for (const userId in ticketData.openTickets) {
+    if (ticketData.openTickets[userId].channelId === deletedId) {
+      console.log(`[-] [حذف يدوي] تم حذف روم التذكرة (${deletedId}) يدوياً من السيرفر. تم فك الحظر عن العضو (${userId}) ليتمكن من فتح تذكرة جديدة فوراً.`);
+      delete ticketData.openTickets[userId];
+      saveTickets();
+      break;
+    }
+  }
+}
+
+// Cleanup any ghost tickets where channel no longer exists
+async function cleanupGhostTickets() {
+  let cleaned = 0;
+  for (const userId in ticketData.openTickets) {
+    const chId = ticketData.openTickets[userId].channelId;
+    try {
+      await discordApi(`/channels/${chId}`);
+    } catch (e) {
+      delete ticketData.openTickets[userId];
+      cleaned++;
+    }
+  }
+  if (cleaned > 0) {
+    saveTickets();
+    console.log(`🧹 تم تنظيف وإلغاء ${cleaned} تذكرة قديمة تم حذف روماتها من السيرفر.`);
+  }
+}
+
 let activeIntents = 33281;
 
 // Connect to Discord Gateway
@@ -598,10 +645,12 @@ function connectGateway() {
           console.log('🔒 إغلاق التذاكر: مقتصر على المشرفين (Administrators)');
           console.log('═══════════════════════════════════════════════════════════════');
 
+          await cleanupGhostTickets();
           await syncExistingMembers();
 
           setInterval(checkExpiredSubscriptions, (config.CHECK_INTERVAL_MINUTES || 5) * 60 * 1000);
           setInterval(syncExistingMembers, (config.CHECK_INTERVAL_MINUTES || 5) * 60 * 1000);
+          setInterval(cleanupGhostTickets, 10 * 60 * 1000); // Check ghost tickets every 10 min
           checkExpiredSubscriptions();
         }
 
@@ -620,7 +669,12 @@ function connectGateway() {
           handleMemberAdd(d);
         }
 
-        // 4. Message Commands
+        // 4. Channel Delete (Admin manually deleted a ticket channel)
+        if (t === 'CHANNEL_DELETE') {
+          handleChannelDelete(d);
+        }
+
+        // 5. Message Commands
         if (t === 'MESSAGE_CREATE') {
           handleMessage(d);
         }
@@ -672,6 +726,14 @@ async function handleMessage(msg) {
   // Command: !ticket (Resends ticket panel)
   if (command === 'ticket' || command === 'ticket-setup') {
     await sendTicketPanel(msg.channel_id);
+    return;
+  }
+
+  // Command: !cleantickets (Reset all stored open tickets)
+  if (command === 'cleantickets' || command === 'reset-tickets') {
+    ticketData.openTickets = {};
+    saveTickets();
+    await sendMessage(msg.channel_id, '✅ **تم تنظيف وحذف جميع التذاكر المسجلة بنجاح!**\nالآن يمكن لأي شخص فتح تذكرة جديدة فوراً.');
     return;
   }
 
