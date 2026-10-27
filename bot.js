@@ -134,9 +134,15 @@ async function sendTicketPanel(channelId = config.TICKET_CHANNEL_ID) {
   const panel = {
     embeds: [
       {
-        title: 'Ticket Kelvo 🎫',
-        description: '`قوانين التذاكر ....`\n• لا تسوي سبام رسائل بالتكت.\n• يمنع فتح أكثر من تذكرة في نفس الوقت.\n• لا تفتح تذكرة إلا إذا كان لديك سبب أو استفسار واضح.\n• إغلاق التذكرة متاح فقط لإدارة السيرفر.',
-        color: 0x22c55e,
+        title: 'Kelvo Store',
+        description: 'لفتح تذكرتك قم باختيار نوع تذكرتك من الاختيارات التي بالأسفل',
+        color: 0x111214,
+        thumbnail: {
+          url: 'https://cdn.discordapp.com/attachments/1401538585269764126/1564597413522440323/kelvo_thumbnail.png'
+        },
+        image: {
+          url: 'https://cdn.discordapp.com/attachments/1401538585269764126/1564597413149413427/kelvo_banner.png'
+        },
         footer: { text: 'Kelvo Store • نظام التذاكر الرسمي' }
       }
     ],
@@ -147,19 +153,22 @@ async function sendTicketPanel(channelId = config.TICKET_CHANNEL_ID) {
           {
             type: 3,
             custom_id: 'kelvo_ticket_select',
-            placeholder: 'إضغط لفتح التذكرة',
+            placeholder: 'اختر تذكرتك من هنا عن طريق الضغط',
             options: [
               {
-                label: 'Support',
-                value: 'ticket_support',
-                description: 'دعم فني ومساعدة عامة',
-                emoji: { name: '⚙️' }
+                label: 'طلب خدمة',
+                value: 'ticket_service',
+                emoji: { name: '👤' }
               },
               {
-                label: 'buying',
+                label: 'شراء منتج',
                 value: 'ticket_buying',
-                description: 'شراء وتفعيل اشتراك Kelvo',
-                emoji: { name: '💳' }
+                emoji: { name: '🛒' }
+              },
+              {
+                label: 'استفسار',
+                value: 'ticket_inquiry',
+                emoji: { name: '⚙️' }
               }
             ]
           }
@@ -198,7 +207,7 @@ async function handleInteraction(interaction) {
 
   // 1. OPEN TICKET FROM SELECT MENU
   if (data.custom_id === 'kelvo_ticket_select') {
-    const selectedVal = data.values && data.values[0] ? data.values[0] : 'ticket_support';
+    const selectedVal = data.values && data.values[0] ? data.values[0] : 'ticket_service';
 
     // Rule: Max 1 Ticket per user!
     if (ticketData.openTickets[userId]) {
@@ -228,7 +237,12 @@ async function handleInteraction(interaction) {
     });
 
     try {
-      const isSupport = selectedVal === 'ticket_support';
+      const typeMap = {
+        ticket_service: { name: 'طلب خدمة', emoji: '👤', color: 0x3b82f6 },
+        ticket_buying: { name: 'شراء منتج', emoji: '🛒', color: 0x22c55e },
+        ticket_inquiry: { name: 'استفسار', emoji: '⚙️', color: 0xeab308 }
+      };
+      const typeInfo = typeMap[selectedVal] || { name: 'تذكرة عامة', emoji: '🎫', color: 0x22c55e };
 
       // Increment ticket counter for sequential numbering
       ticketData.counter = (ticketData.counter || 0) + 1;
@@ -240,7 +254,7 @@ async function handleInteraction(interaction) {
         name: channelName,
         type: 0, // Text Channel
         parent_id: config.TICKET_CATEGORY_ID, // كاتجوري TICKET
-        topic: `تذكرة: ${isSupport ? 'Support' : 'Buying'} • صاحب التذكرة: ${username} (${userId})`,
+        topic: `تذكرة: ${typeInfo.name} • صاحب التذكرة: ${username} (${userId})`,
         permission_overwrites: [
           {
             id: config.GUILD_ID, // @everyone -> HIDE
@@ -264,7 +278,7 @@ async function handleInteraction(interaction) {
       ticketData.openTickets[userId] = {
         channelId: newChannel.id,
         num: ticketNum,
-        type: isSupport ? 'Support' : 'Buying',
+        type: typeInfo.name,
         username: username,
         createdAt: Date.now()
       };
@@ -275,10 +289,10 @@ async function handleInteraction(interaction) {
         content: `<@${userId}>`,
         embeds: [
           {
-            title: `🎫 تذكرة ${isSupport ? 'Support (دعم فني)' : 'Buying (شراء واشتراك)'} #${ticketNum}`,
-            description: `مرحباً بك <@${userId}> في تذكرتك الخاصة!\n\nيرجى كتابة تفاصيل طلبك أو استفسارك هنا وسيقوم فريق الإدارة بالرد عليك في أقرب وقت.\n\n⚠️ **قوانين:**\n• لا تسوي سبام رسائل بالتكت.\n• إغلاق التذكرة متاح فقط للمشرفين (Administrators).`,
-            color: isSupport ? 0x0284c7 : 0x22c55e,
-            footer: { text: `Ticket #${ticketNum} • User ID: ${userId} • Kelvo Store` }
+            title: `🎫 تذكرة ${typeInfo.name} #${ticketNum}`,
+            description: `مرحباً بك <@${userId}> في تذكرتك الخاصة (${typeInfo.name})!\n\nيرجى كتابة تفاصيل طلبك أو استفسارك هنا وسيقوم فريق الدعم بالرد عليك فوراً وتلبية جميع احتياجاتك باحترافية.\n\n⚠️ **قوانين:**\n• لا تسوي سبام رسائل بالتكت.\n• إغلاق التذكرة متاح فقط للمشرفين (Administrators).`,
+            color: typeInfo.color,
+            footer: { text: `Ticket #${ticketNum} • Kelvo Store` }
           }
         ],
         components: [
@@ -306,7 +320,7 @@ async function handleInteraction(interaction) {
         })
       });
 
-      console.log(`[+] [تذكرة جديدة] فتح ${username} تذكرة (#ticket-${ticketNum}) في كاتجوري TICKET`);
+      console.log(`[+] [تذكرة جديدة] فتح ${username} تذكرة ${typeInfo.name} (#ticket-${ticketNum}) في كاتجوري TICKET`);
     } catch (err) {
       console.error('Failed to create ticket channel:', err.message);
       ticketData.counter = Math.max(0, (ticketData.counter || 1) - 1);
