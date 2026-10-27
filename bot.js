@@ -299,6 +299,17 @@ async function handleInteraction(interaction) {
       console.log(`[+] [تذكرة جديدة] فتح ${username} تذكرة (#ticket-${ticketNum}) في كاتجوري TICKET`);
     } catch (err) {
       console.error('Failed to create ticket channel:', err.message);
+      ticketData.counter = Math.max(0, (ticketData.counter || 1) - 1);
+      saveTickets();
+      try {
+        await fetch(`https://discord.com/api/v10/webhooks/${config.CLIENT_ID}/${token}/messages/@original`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: `❌ **تعذر إنشاء روم التذكرة!**\nالسبب: البوت يحتاج صلاحية **Administrator** أو **Manage Channels** في السيرفر لإنشاء القنوات.\nيرجى تفعيل صلاحية Administrator لرتبة البوت Kelvo Bot أو إعطائه رتبة Kelvo Team.`
+          })
+        });
+      } catch (e) {}
     }
     return;
   }
