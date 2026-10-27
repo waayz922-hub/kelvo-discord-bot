@@ -1,7 +1,8 @@
 // ═════════════════════════════════════════════════════════════════════
-// KELVO ENHANCER - 24/7 DISCORD AUTOMATION BOT
-// 100% Automatic: Gives, tracks, and strips 3-month roles automatically
-// Runs natively on Node.js 18+ (No external packages required)
+// KELVO ENHANCER - 24/7 DISCORD BOT & TICKET ENGINE
+// 1. Ticket System (Support & Buying, 1 ticket limit, Admin-only close)
+// 2. Member join logs & 2-Category Role Tracker (3-Month & Lifetime)
+// 3. 100% Automatic 90-day subscription timer and kick
 // ═════════════════════════════════════════════════════════════════════
 
 const http = require('http');
@@ -10,6 +11,7 @@ const path = require('path');
 
 const configPath = path.join(__dirname, 'config.json');
 const subsPath = path.join(__dirname, 'subscriptions.json');
+const ticketsPath = path.join(__dirname, 'tickets.json');
 
 let config = {
   CLIENT_ID: '1564533266222948382',
@@ -17,6 +19,10 @@ let config = {
   LIFETIME_ROLE_ID: '1564534422080856084',
   THREE_MONTH_ROLE_ID: '1564535076857970740',
   THREE_MONTH_ROLE_NAME: '3 Month Subscription',
+  TICKET_CATEGORY_ID: '1401538484279447644', // 🔧 الدعم الفني
+  TICKET_CHANNEL_ID: '1401538585269764126',  // 🎫・ticket
+  WELCOME_CHANNEL_ID: '1401537756521435136', // 「✋」welcome
+  OWNER_ID: '1296740597591314434',
   CHECK_INTERVAL_MINUTES: 5,
   PORT: 3000
 };
@@ -28,22 +34,23 @@ if (fs.existsSync(configPath)) {
   } catch (e) {}
 }
 
-// Token Resolution with hardcoded base64 fallback so it always connects
+// Token resolution
 const _p1 = 'MTU2NDUzMzI2NjIyMjk0ODM4Mg';
 const _p2 = 'GzjdjM';
 const _p3 = 'Kepx_o3ltNTowVe9s43tLSmsgntDL7_Em4DJw4';
 const FALLBACK_TOKEN = [_p1, _p2, _p3].join('.');
 const BOT_AUTH_TOKEN = process.env.BOT_TOKEN || (config.BOT_TOKEN && config.BOT_TOKEN !== 'YOUR_BOT_TOKEN_HERE' ? config.BOT_TOKEN : FALLBACK_TOKEN);
 
-// 1. Built-in Keep-Alive HTTP Server (For 24/7 Cloud Hosting on Render/Railway/Bot-Hosting)
+// 1. Built-in Keep-Alive HTTP Server
 const PORT = process.env.PORT || config.PORT || 3000;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify({
     status: 'online',
-    bot: 'Kelvo Enhancer Role Manager',
+    bot: 'Kelvo Enhancer Bot',
     uptime: Math.floor(process.uptime()) + 's',
     activeSubscriptions: subscriptions.filter(s => s.active).length,
+    activeTickets: Object.keys(openTickets).length,
     timestamp: new Date().toISOString()
   }));
 });
@@ -52,20 +59,22 @@ server.listen(PORT, () => {
   console.log('🌐 خادم الـ 24h جاهز ويعمل على المنفذ: ' + PORT);
 });
 
-// Load or create subscriptions
+// Load / Save Subscriptions
 let subscriptions = [];
 if (fs.existsSync(subsPath)) {
-  try {
-    subscriptions = JSON.parse(fs.readFileSync(subsPath, 'utf8'));
-  } catch (e) {
-    subscriptions = [];
-  }
+  try { subscriptions = JSON.parse(fs.readFileSync(subsPath, 'utf8')); } catch (e) { subscriptions = []; }
+}
+function saveSubscriptions() {
+  try { fs.writeFileSync(subsPath, JSON.stringify(subscriptions, null, 2), 'utf8'); } catch (e) {}
 }
 
-function saveSubscriptions() {
-  try {
-    fs.writeFileSync(subsPath, JSON.stringify(subscriptions, null, 2), 'utf8');
-  } catch (e) {}
+// Load / Save Tickets { userId: { channelId, type, createdAt } }
+let openTickets = {};
+if (fs.existsSync(ticketsPath)) {
+  try { openTickets = JSON.parse(fs.readFileSync(ticketsPath, 'utf8')); } catch (e) { openTickets = {}; }
+}
+function saveTickets() {
+  try { fs.writeFileSync(ticketsPath, JSON.stringify(openTickets, null, 2), 'utf8'); } catch (e) {}
 }
 
 // Discord REST API Helper
@@ -78,9 +87,7 @@ async function discordApi(endpoint, method = 'GET', body = null) {
       'Content-Type': 'application/json'
     }
   };
-  if (body) {
-    options.body = JSON.stringify(body);
-  }
+  if (body) options.body = JSON.stringify(body);
 
   const res = await fetch(url, options);
   if (res.status === 204) return true;
@@ -92,19 +99,249 @@ async function discordApi(endpoint, method = 'GET', body = null) {
   return data;
 }
 
-// Send Message to Channel
-async function sendMessage(channelId, content) {
+// Send Message Helper
+async function sendMessage(channelId, payload) {
   try {
-    return await discordApi('/channels/' + channelId + '/messages', 'POST', { content });
+    const body = typeof payload === 'string' ? { content: payload } : payload;
+    return await discordApi('/channels/' + channelId + '/messages', 'POST', body);
   } catch (err) {
     console.error('Error sending message:', err.message);
+  }
+}
+
+// Send Ticket Setup Panel in #🎫・ticket
+async function sendTicketPanel(channelId = config.TICKET_CHANNEL_ID) {
+  const panel = {
+    embeds: [
+      {
+        title: 'Ticket Kelvo 🎫',
+        description: '`rules Ticket ....`\n• (( Don\'t Spam In Ticket ))\n• (( Don\'t open two Ticket in same time ))\n• (( don\'t open a ticket unless you have proof or conclusive evidence ))\n• لا تسوي سبام رسائل بالتكت',
+        color: 0x22c55e,
+        footer: { text: 'Kelvo Store • نظام التذاكر الرسمي' }
+      }
+    ],
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 3,
+            custom_id: 'kelvo_ticket_select',
+            placeholder: 'إضغط لفتح التذكرة',
+            options: [
+              {
+                label: 'Support',
+                value: 'ticket_support',
+                description: 'دعم فني ومساعدة عامة',
+                emoji: { name: '⚙️' }
+              },
+              {
+                label: 'buying',
+                value: 'ticket_buying',
+                description: 'شراء وتفعيل اشتراك Kelvo',
+                emoji: { name: '💳' }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+
+  try {
+    await discordApi('/channels/' + channelId + '/messages', 'POST', panel);
+    console.log('✅ تم إرسال بنل التذاكر إلى الروم بنجاح!');
+  } catch (err) {
+    console.error('Failed to send ticket panel:', err.message);
+  }
+}
+
+// Check if user is Administrator
+function isUserAdmin(member) {
+  if (!member) return false;
+  if (member.user && member.user.id === config.OWNER_ID) return true;
+  if (member.permissions) {
+    const permBitfield = BigInt(member.permissions);
+    if ((permBitfield & 8n) === 8n) return true; // ADMINISTRATOR permission
+  }
+  return false;
+}
+
+// Handle Ticket Interactions (Open & Close)
+async function handleInteraction(interaction) {
+  const { id, token, data, member, user } = interaction;
+  const userData = user || (member ? member.user : null);
+  const userId = userData ? userData.id : null;
+  const username = userData ? (userData.global_name || userData.username) : 'User';
+
+  if (!data || !userId) return;
+
+  // 1. OPEN TICKET FROM SELECT MENU
+  if (data.custom_id === 'kelvo_ticket_select') {
+    const selectedVal = data.values && data.values[0] ? data.values[0] : 'ticket_support';
+
+    // Rule: Max 1 Ticket per user!
+    if (openTickets[userId]) {
+      const existingChannel = openTickets[userId].channelId;
+      // Respond Ephemeral (only visible to this user)
+      await fetch(`https://discord.com/api/v10/interactions/${id}/${token}/callback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 4,
+          data: {
+            content: `❌ **لا يمكنك فتح أكثر من تذكرة في نفس الوقت!**\nلديك تذكرة مفتوحة بالفعل في الروم: <#${existingChannel}>`,
+            flags: 64 // EPHEMERAL
+          }
+        })
+      });
+      return;
+    }
+
+    // Acknowledge interaction (loading...)
+    await fetch(`https://discord.com/api/v10/interactions/${id}/${token}/callback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 5,
+        data: { flags: 64 } // Defer Ephemeral
+      })
+    });
+
+    try {
+      const isSupport = selectedVal === 'ticket_support';
+      const channelName = (isSupport ? 'support-' : 'buying-') + username.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+
+      // Create Private Channel
+      const newChannel = await discordApi(`/guilds/${config.GUILD_ID}/channels`, 'POST', {
+        name: channelName,
+        type: 0, // Text Channel
+        parent_id: config.TICKET_CATEGORY_ID, // 🔧 الدعم الفني
+        permission_overwrites: [
+          {
+            id: config.GUILD_ID, // @everyone -> HIDE
+            type: 0,
+            deny: (1 << 10).toString() // VIEW_CHANNEL denied
+          },
+          {
+            id: userId, // User -> ALLOW
+            type: 1,
+            allow: ((1 << 10) | (1 << 11) | (1 << 15) | (1 << 16)).toString() // View, Send, Read History, Attach Files
+          },
+          {
+            id: config.CLIENT_ID, // Bot -> Full Allow
+            type: 1,
+            allow: "8" // Administrator
+          }
+        ]
+      });
+
+      // Save to active tickets
+      openTickets[userId] = {
+        channelId: newChannel.id,
+        type: isSupport ? 'Support' : 'Buying',
+        username: username,
+        createdAt: Date.now()
+      };
+      saveTickets();
+
+      // Send Welcome Message inside the new Ticket Channel
+      await sendMessage(newChannel.id, {
+        content: `<@${userId}>`,
+        embeds: [
+          {
+            title: `🎫 تذكرة ${isSupport ? 'Support (دعم فني)' : 'Buying (شراء واشتراك)'}`,
+            description: `مرحباً بك <@${userId}> في تذكرتك الخاصة!\n\nيرجى كتابة تفاصيل طلبك أو استفسارك هنا وسيقوم فريق الإدارة بالرد عليك في أقرب وقت.\n\n⚠️ **تنبيه:** إغلاق التذكرة متاح فقط للمشرفين (Administrators).`,
+            color: isSupport ? 0x0284c7 : 0x22c55e,
+            footer: { text: `User ID: ${userId} • Kelvo Store` }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 4, // DANGER / RED
+                custom_id: 'close_ticket',
+                label: 'إغلاق التذكرة (Close)',
+                emoji: { name: '🔒' }
+              }
+            ]
+          }
+        ]
+      });
+
+      // Update follow-up to user
+      await fetch(`https://discord.com/api/v10/webhooks/${config.CLIENT_ID}/${token}/messages/@original`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: `✅ **تم فتح تذكرتك بنجاح:** <#${newChannel.id}>`
+        })
+      });
+
+      console.log(`[+] [تذكرة جديدة] فتح ${username} تذكرة (${isSupport ? 'Support' : 'Buying'}): #${channelName}`);
+    } catch (err) {
+      console.error('Failed to create ticket channel:', err.message);
+    }
+    return;
+  }
+
+  // 2. CLOSE TICKET (ONLY ADMINISTRATOR)
+  if (data.custom_id === 'close_ticket') {
+    const channelId = interaction.channel_id;
+
+    // Rule: Only Administrator can close!
+    if (!isUserAdmin(member)) {
+      await fetch(`https://discord.com/api/v10/interactions/${id}/${token}/callback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 4,
+          data: {
+            content: `❌ **عذراً! لا يمكن إغلاق التذكرة إلا من قبل المشرفين (Administrators) فقط.**`,
+            flags: 64 // EPHEMERAL
+          }
+        })
+      });
+      return;
+    }
+
+    // Admin verified! Close & Delete ticket
+    await fetch(`https://discord.com/api/v10/interactions/${id}/${token}/callback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 4,
+        data: {
+          content: `🔒 تم طلب إغلاق التذكرة بواسطة المشرف <@${userId}>. جاري حذف القناة خلال 3 ثوانٍ...`
+        }
+      })
+    });
+
+    // Remove from openTickets
+    for (const u in openTickets) {
+      if (openTickets[u].channelId === channelId) {
+        delete openTickets[u];
+        break;
+      }
+    }
+    saveTickets();
+
+    setTimeout(async () => {
+      try {
+        await discordApi(`/channels/${channelId}`, 'DELETE');
+        console.log(`[-] [إغلاق تذكرة] تم إغلاق وحذف قناة التذكرة (${channelId}) بواسطة المشرف ${username}`);
+      } catch (e) {}
+    }, 3000);
+    return;
   }
 }
 
 // Automatic Sync of All Existing Members with 3-Month Role
 async function syncExistingMembers() {
   try {
-    console.log('🔍 [تلقائي] جاري فحص ومزامنة أعضاء السيرفر...');
     const members = await discordApi('/guilds/' + config.GUILD_ID + '/members?limit=1000');
     if (!Array.isArray(members)) return;
 
@@ -119,7 +356,6 @@ async function syncExistingMembers() {
         const existing = subscriptions.find(s => s.userId === m.user.id && s.active);
         if (!existing) {
           const expiresAt = now + (90 * 24 * 60 * 60 * 1000);
-
           subscriptions.push({
             userId: m.user.id,
             username: m.user.global_name || m.user.username,
@@ -130,25 +366,48 @@ async function syncExistingMembers() {
             active: true
           });
           addedCount++;
-          console.log('⚡ [مزامنة تلقائية] تم تسجيل اشتراك العضو: ' + m.user.username + ' (' + m.user.id + ') لمدة 90 يوماً');
         }
       }
     }
 
-    if (addedCount > 0) {
-      saveSubscriptions();
-      console.log('✅ تم حفظ ' + addedCount + ' مشترك في ملف الاشتراكات تلقائياً!');
+    if (addedCount > 0) saveSubscriptions();
+  } catch (err) {}
+}
+
+// Display 2-Category Roles Report
+async function getRolesReport() {
+  try {
+    const members = await discordApi('/guilds/' + config.GUILD_ID + '/members?limit=1000');
+    if (!Array.isArray(members)) return null;
+
+    const threeMonthMembers = [];
+    const lifetimeMembers = [];
+    const now = Date.now();
+
+    for (const m of members) {
+      if (!m.user || m.user.bot) continue;
+      const roles = Array.isArray(m.roles) ? m.roles : [];
+      const name = m.user.global_name || m.user.username;
+
+      if (roles.includes(config.THREE_MONTH_ROLE_ID)) {
+        const sub = subscriptions.find(s => s.userId === m.user.id && s.active);
+        let daysLeft = 90;
+        if (sub && sub.expiresAt) {
+          daysLeft = Math.max(0, Math.ceil((sub.expiresAt - now) / (24 * 60 * 60 * 1000)));
+        }
+        threeMonthMembers.push(`• <@${m.user.id}> — متبقي: **${daysLeft}** يوم`);
+      } else if (roles.includes(config.LIFETIME_ROLE_ID)) {
+        lifetimeMembers.push(`• <@${m.user.id}> — \`دائم ∞\``);
+      }
     }
-  } catch (err) {
-    if (err.message && err.message.includes('Unknown Guild')) {
-      console.log('💡 تنبيه: البوت لم يدخل السيرفر بعد. يرجى دعوة البوت عبر الرابط الخاص بك.');
-    } else {
-      console.warn('Sync notice:', err.message);
-    }
+
+    return { threeMonthMembers, lifetimeMembers };
+  } catch (e) {
+    return null;
   }
 }
 
-// Automatic Expiration Checker: Strips Role from Discord when 90 Days End
+// Check & Expire Subscriptions (Auto Kick)
 async function checkExpiredSubscriptions() {
   const now = Date.now();
   let changed = false;
@@ -170,12 +429,10 @@ async function checkExpiredSubscriptions() {
     }
   }
 
-  if (changed) {
-    saveSubscriptions();
-  }
+  if (changed) saveSubscriptions();
 }
 
-// Handle Real-Time Role Changes (GUILD_MEMBER_UPDATE)
+// Real-Time Member Update
 function handleMemberUpdate(data) {
   const userId = data.user ? data.user.id : null;
   const username = data.user ? (data.user.global_name || data.user.username) : 'User';
@@ -186,7 +443,6 @@ function handleMemberUpdate(data) {
   const hasThreeMonth = roles.includes(config.THREE_MONTH_ROLE_ID);
   const existingSub = subscriptions.find(s => s.userId === userId && s.active);
 
-  // 1. Role was ADDED in Discord:
   if (hasThreeMonth && !existingSub) {
     const now = Date.now();
     const expiresAt = now + (90 * 24 * 60 * 60 * 1000);
@@ -200,21 +456,36 @@ function handleMemberUpdate(data) {
       active: true
     });
     saveSubscriptions();
-    console.log('🎉 [اكتشاف تلقائي] تم إعطاء رتبة 3 شهور للعضو: ' + username + ' (' + userId + ') — تم تفعيل عداد الـ 90 يوماً تلقائياً!');
+    console.log(`🎉 [إعطاء رتبة تلقائي] حصل ${username} على رتبة 3 شهور! بدأ عداد الـ 90 يوماً.`);
   }
 
-  // 2. Role was REMOVED in Discord:
   if (!hasThreeMonth && existingSub) {
     existingSub.active = false;
     existingSub.revokedAt = Date.now();
     saveSubscriptions();
-    console.log('🚫 [اكتشاف تلقائي] تم سحب رتبة 3 شهور من العضو: ' + username + ' (' + userId + ') — سيتم طرده من الإضافة فوراً عند فتحها!');
+    console.log(`🚫 [سحب رتبة تلقائي] سُحبت رتبة 3 شهور من ${username}! سيتم طرده من الإضافة.`);
   }
+}
+
+// Real-Time New Member Join
+async function handleMemberAdd(data) {
+  const user = data.user;
+  if (!user || user.bot) return;
+
+  const name = user.global_name || user.username;
+  console.log(`📥 [عضو جديد] دخل السيرفر الآن: ${name} (ID: ${user.id})`);
+
+  // Send Welcome Message in 「✋」welcome
+  try {
+    await sendMessage(config.WELCOME_CHANNEL_ID, {
+      content: `👋 مرحباً بك يا <@${user.id}> في سيرفر **KELVO STORE**! نورت السيرفر ✨`
+    });
+  } catch (e) {}
 }
 
 let activeIntents = 33281;
 
-// Connect to Discord Gateway WebSocket
+// Connect to Discord Gateway
 function connectGateway() {
   const ws = new WebSocket('wss://gateway.discord.gg/?v=10&encoding=json');
   let heartbeatInterval = null;
@@ -230,51 +501,53 @@ function connectGateway() {
       const { op, d, s, t } = payload;
       if (s) lastSequence = s;
 
-      // Opcode 10: Hello
       if (op === 10) {
         heartbeatInterval = setInterval(() => {
           ws.send(JSON.stringify({ op: 1, d: lastSequence }));
         }, d.heartbeat_interval);
 
-        // Opcode 2: Identify
         ws.send(JSON.stringify({
           op: 2,
           d: {
             token: BOT_AUTH_TOKEN,
             intents: activeIntents,
-            properties: {
-              os: 'linux',
-              browser: 'kelvo-bot-24h',
-              device: 'kelvo-bot-24h'
-            }
+            properties: { os: 'windows', browser: 'kelvo-bot-24h', device: 'kelvo-bot-24h' }
           }
         }));
       }
 
-      // Opcode 0: Dispatch Events
       if (op === 0) {
         if (t === 'READY') {
           console.log('═══════════════════════════════════════════════════════════════');
-          console.log('🤖 بوت Kelvo Enhancer متصل الآن بنجاح (Online)!');
-          console.log('👤 البوت: ' + d.user.username + '#' + d.user.discriminator);
-          console.log('🆔 آيدي رتبة الـ 3 شهور: ' + config.THREE_MONTH_ROLE_ID);
-          console.log('👑 آيدي رتبة مدى الحياة: ' + config.LIFETIME_ROLE_ID);
+          console.log('🤖 بوت Kelvo Enhancer متصل وشغال الآن بنجاح (Online)!');
+          console.log('👤 اسم البوت: ' + d.user.username + '#' + d.user.discriminator);
+          console.log('🎫 نظام التذاكر: مفعل (Support & Buying)');
+          console.log('🔒 إغلاق التذاكر: مقتصر على المشرفين (Administrators)');
           console.log('═══════════════════════════════════════════════════════════════');
 
           await syncExistingMembers();
 
-          // Periodic checks
           setInterval(checkExpiredSubscriptions, (config.CHECK_INTERVAL_MINUTES || 5) * 60 * 1000);
           setInterval(syncExistingMembers, (config.CHECK_INTERVAL_MINUTES || 5) * 60 * 1000);
           checkExpiredSubscriptions();
         }
 
-        // Live Role Add/Remove Detection
+        // 1. Interaction Create (Ticket Select & Close Button)
+        if (t === 'INTERACTION_CREATE') {
+          handleInteraction(d);
+        }
+
+        // 2. Member Update (Role added / removed)
         if (t === 'GUILD_MEMBER_UPDATE') {
           handleMemberUpdate(d);
         }
 
-        // Chat Commands
+        // 3. Member Join (New user entered server)
+        if (t === 'GUILD_MEMBER_ADD') {
+          handleMemberAdd(d);
+        }
+
+        // 4. Message Commands
         if (t === 'MESSAGE_CREATE') {
           handleMessage(d);
         }
@@ -295,7 +568,7 @@ function connectGateway() {
       return;
     }
 
-    console.warn('⚠️ انقطع الاتصال (' + e.code + ')، جاري إعادة المحاولة تلقائياً خلال 5 ثوانٍ...');
+    console.warn('⚠️ انقطع الاتصال (' + e.code + ')، جاري إعادة المحاولة تلقائياً...');
     setTimeout(connectGateway, 5000);
   };
 
@@ -323,16 +596,44 @@ async function handleMessage(msg) {
   const command = parts[0].toLowerCase();
   const args = parts.slice(1);
 
-  if (command === 'help') {
-    const helpMsg = 
-      '📋 **أوامر بوت Kelvo Enhancer لإدارة الرتب والاشتراكات:**\n\n' +
-      '• `!sub 3m @user` - إعطاء رتبة 3 شهور لعضو (يسحبها تلقائياً بعد 90 يوم)\n' +
-      '• `!sub lifetime @user` - إعطاء رتبة مدى الحياة (Lifetime Access)\n' +
-      '• `!unsub @user` - سحب الرتبة وطرده من الإضافة فوراً\n' +
-      '• `!check @user` - فحص الأيام المتبقية لاشتراك العضو\n' +
-      '• `!list` - عرض المشتركين النشطين في نظام الـ 3 شهور\n\n' +
-      '💡 *ملاحظة:* البوت تلقائي 100%، يمكنك أيضاً إعطاء الرتبة للعضو في ديسكورد مباشرة وسيتعرف عليها فوراً!';
-    await sendMessage(msg.channel_id, helpMsg);
+  // Command: !ticket (Resends ticket panel)
+  if (command === 'ticket' || command === 'ticket-setup') {
+    await sendTicketPanel(msg.channel_id);
+    return;
+  }
+
+  // Command: !roles or !members (2-Category Role Tracker)
+  if (command === 'roles' || command === 'members' || command === 'subs') {
+    const report = await getRolesReport();
+    if (!report) {
+      await sendMessage(msg.channel_id, '❌ تعذر جلب قائمة الرتب.');
+      return;
+    }
+
+    const threeMText = report.threeMonthMembers.length > 0 ? report.threeMonthMembers.join('\n') : '• لا يوجد مشتركون حالياً';
+    const lifetimeText = report.lifetimeMembers.length > 0 ? report.lifetimeMembers.join('\n') : '• لا يوجد مشتركون حالياً';
+
+    await sendMessage(msg.channel_id, {
+      embeds: [
+        {
+          title: '📊 قائمة المشتركين وأصحاب الرتب في السيرفر',
+          color: 0x22c55e,
+          fields: [
+            {
+              name: '⏳ الخانة الأولى: أصحاب رتبة الـ 3 شهور (3 Month Subscription)',
+              value: threeMText,
+              inline: false
+            },
+            {
+              name: '👑 الخانة الثانية: أصحاب رتبة مدى الحياة (Lifetime Access)',
+              value: lifetimeText,
+              inline: false
+            }
+          ],
+          footer: { text: 'Kelvo Enhancer • Role Manager' }
+        }
+      ]
+    });
     return;
   }
 
@@ -349,7 +650,6 @@ async function handleMessage(msg) {
     if (type === '3m' || type === '3months') {
       try {
         await discordApi('/guilds/' + config.GUILD_ID + '/members/' + targetId + '/roles/' + config.THREE_MONTH_ROLE_ID, 'PUT');
-
         const now = Date.now();
         const expiresAt = now + (90 * 24 * 60 * 60 * 1000);
 
@@ -364,17 +664,14 @@ async function handleMessage(msg) {
           active: true
         };
 
-        if (existingIdx !== -1) {
-          subscriptions[existingIdx] = subData;
-        } else {
-          subscriptions.push(subData);
-        }
+        if (existingIdx !== -1) subscriptions[existingIdx] = subData;
+        else subscriptions.push(subData);
         saveSubscriptions();
 
         const expDate = new Date(expiresAt).toISOString().split('T')[0];
-        await sendMessage(msg.channel_id, '✅ **تم تفعيل اشتراك 3 شهور بنجاح!**\n👤 العضو: <@' + targetId + '>\n⏳ المدة: 90 يوماً\n📅 ينتهي في: `' + expDate + '`\n*(البوت سيسحب الرتبة ويطرده من الإضافة تلقائياً فور انتهاء المدة)*');
+        await sendMessage(msg.channel_id, `✅ **تم تفعيل اشتراك 3 شهور بنجاح!**\n👤 العضو: <@${targetId}>\n⏳ المدة: 90 يوماً\n📅 ينتهي في: \`${expDate}\`\n*(البوت سيسحب الرتبة ويطرده من الإضافة تلقائياً بعد 90 يوم)*`);
       } catch (err) {
-        await sendMessage(msg.channel_id, '❌ تعذر إعطاء الرتبة: ' + err.message + '\n*(تأكد من أن رتبة البوت في إعدادات السيرفر تقع فوق رتبة الاشتراك)*');
+        await sendMessage(msg.channel_id, '❌ تعذر إعطاء الرتبة: ' + err.message);
       }
       return;
     }
@@ -382,7 +679,7 @@ async function handleMessage(msg) {
     if (type === 'lifetime') {
       try {
         await discordApi('/guilds/' + config.GUILD_ID + '/members/' + targetId + '/roles/' + config.LIFETIME_ROLE_ID, 'PUT');
-        await sendMessage(msg.channel_id, '👑 **تم تفعيل رتبة مدى الحياة (Lifetime) بنجاح!**\n👤 العضو: <@' + targetId + '>');
+        await sendMessage(msg.channel_id, `👑 **تم تفعيل رتبة مدى الحياة (Lifetime) بنجاح!**\n👤 العضو: <@${targetId}>`);
       } catch (err) {
         await sendMessage(msg.channel_id, '❌ تعذر إعطاء الرتبة: ' + err.message);
       }
@@ -413,47 +710,23 @@ async function handleMessage(msg) {
         saveSubscriptions();
       }
 
-      await sendMessage(msg.channel_id, '🚫 **تم سحب الرتبة من <@' + targetId + '> بنجاح!**\nسيتم قفل الإضافة وطرده فوراً عند فتحها.');
+      await sendMessage(msg.channel_id, `🚫 **تم سحب الرتبة من <@${targetId}> بنجاح!**\nسيتم قفل الإضافة وطرده فوراً.`);
     } catch (err) {
       await sendMessage(msg.channel_id, '❌ تعذر سحب الرتبة: ' + err.message);
     }
     return;
   }
 
-  // Command: !check @user
-  if (command === 'check') {
-    const targetId = extractUserId(args[0]);
-    if (!targetId) {
-      await sendMessage(msg.channel_id, '❌ طريقة الاستخدام: `!check @user`');
-      return;
-    }
-
-    const sub = subscriptions.find(s => s.userId === targetId && s.active);
-    if (!sub) {
-      await sendMessage(msg.channel_id, 'ℹ️ لا يوجد اشتراك 3 شهور نشط لهذا العضو.');
-      return;
-    }
-
-    const daysLeft = Math.max(0, Math.ceil((sub.expiresAt - Date.now()) / (24 * 60 * 60 * 1000)));
-    const expDate = new Date(sub.expiresAt).toISOString().split('T')[0];
-    await sendMessage(msg.channel_id, '📊 **بيانات اشتراك <@' + targetId + '>:**\n• الرتبة: ' + sub.roleName + '\n• الأيام المتبقية: **' + daysLeft + '** يوم\n• تاريخ الانتهاء: `' + expDate + '`');
-    return;
-  }
-
-  // Command: !list
-  if (command === 'list') {
-    const activeSubs = subscriptions.filter(s => s.active);
-    if (activeSubs.length === 0) {
-      await sendMessage(msg.channel_id, 'ℹ️ لا يوجد مشتركون نشطون حالياً.');
-      return;
-    }
-
-    let listText = '📋 **قائمة المشتركين النشطين (اشتراك 3 شهور):**\n\n';
-    activeSubs.forEach((s, idx) => {
-      const daysLeft = Math.max(0, Math.ceil((s.expiresAt - Date.now()) / (24 * 60 * 60 * 1000)));
-      listText += (idx + 1) + '. <@' + s.userId + '> — متبقي: **' + daysLeft + '** يوم\n';
-    });
-    await sendMessage(msg.channel_id, listText);
+  // Command: !help
+  if (command === 'help') {
+    const helpMsg = 
+      '📋 **أوامر بوت Kelvo Enhancer:**\n\n' +
+      '• `!roles` أو `!members` - عرض الخانتين (أصحاب رتبة 3 شهور وأصحاب رتبة مدى الحياة)\n' +
+      '• `!ticket` - إعادة إرسال بنل التذاكر في الروم\n' +
+      '• `!sub 3m @user` - إعطاء رتبة 3 شهور لعضو (تُسحب تلقائياً بعد 90 يوم)\n' +
+      '• `!sub lifetime @user` - إعطاء رتبة مدى الحياة\n' +
+      '• `!unsub @user` - سحب الرتبة وطرده من الإضافة فوراً';
+    await sendMessage(msg.channel_id, helpMsg);
     return;
   }
 }
