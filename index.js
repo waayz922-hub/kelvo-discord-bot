@@ -57,8 +57,18 @@ const server = http.createServer((req, res) => {
   }));
 });
 
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.warn('⚠️ المنفذ ' + PORT + ' مشغول حالياً، جاري اختيار منفذ متاح تلقائياً...');
+    server.listen(0);
+  } else {
+    console.error('HTTP server error:', err.message);
+  }
+});
+
 server.listen(PORT, () => {
-  console.log('🌐 خادم الـ 24h جاهز ويعمل على المنفذ: ' + PORT);
+  const addr = server.address();
+  console.log('🌐 خادم الـ 24h جاهز ويعمل على المنفذ: ' + (addr && addr.port ? addr.port : PORT));
 });
 
 // Load / Save Subscriptions
